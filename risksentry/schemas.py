@@ -174,3 +174,51 @@ class AnalysisResponse(BaseModel):
     shock_scenarios: list[ShockScenarioResult]
     memo: AgentSynthesizedMemo
     memo_meta: MemoMeta
+
+
+class MetricsOnlyResponse(BaseModel):
+    """Fast response from ``POST /analyze`` — deterministic metrics only, no LLM.
+
+    Returned immediately (~10 s) so the dashboard can render charts while
+    the memo is synthesised asynchronously via ``POST /session/{id}/memo/stream``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(description="Opaque UUID for this session; pass to /memo/stream and /chat/stream.")
+    request: AnalysisRequest
+    portfolio: PortfolioMetrics
+    assets: list[AssetMetrics]
+    shock_scenarios: list[ShockScenarioResult]
+    cumulative_returns: dict[str, list[object]] = Field(
+        description="Keys: 'dates' (ISO strings), 'portfolio' (pct), 'benchmark' (pct).",
+    )
+    correlation_matrix: dict[str, object] = Field(
+        description="Pearson correlation matrix. Keys: 'tickers' (list[str]), 'matrix' (list[list[float]]).",
+    )
+
+
+class SessionAnalysisResponse(AnalysisResponse):
+    """Extended response — kept for backward-compat and test fixtures."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(description="Opaque UUID identifying this analysis session.")
+    cumulative_returns: dict[str, list[object]] = Field(
+        description=(
+            "Daily cumulative returns for the line chart. "
+            "Keys: 'dates' (ISO strings), 'portfolio' (pct), 'benchmark' (pct)."
+        ),
+    )
+    correlation_matrix: dict[str, object] = Field(
+        description="Pearson correlation matrix. Keys: 'tickers' (list[str]), 'matrix' (list[list[float]]).",
+    )
+
+
+class ChatRequest(BaseModel):
+    """Payload for ``POST /chat/stream`` and ``POST /session/{id}/memo/stream``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(description="Session ID returned by /analyze.")
+    message: str = Field(min_length=1, max_length=4000, description="User's follow-up question.")

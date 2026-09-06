@@ -32,6 +32,8 @@ from risksentry.schemas import (
     AnalysisResponse,
     MemoContext,
     MemoMeta,
+    MetricsOnlyResponse,
+    SessionAnalysisResponse,
 )
 
 # ---------------------------------------------------------------------------
@@ -590,8 +592,8 @@ def test_analyze_success(
     assert response.status_code == 200
     body = response.json()
 
-    # Response matches the strict schema.
-    AnalysisResponse.model_validate(body)
+    # /analyze now returns MetricsOnlyResponse (fast path, no LLM)
+    MetricsOnlyResponse.model_validate(body)
 
     assert body["request"]["tickers"] == ["AAPL", "MSFT"]
     assert body["portfolio"]["var_95_daily"] > 0
@@ -599,8 +601,9 @@ def test_analyze_success(
     assert len(body["assets"]) == 2
     assert [asset["weight"] for asset in body["assets"]] == [0.6, 0.4]
     assert len(body["shock_scenarios"]) == 3
-    assert body["memo"]["title"] == "Fake memo"
-    assert body["memo_meta"]["synthesized_by_llm"] is True
+    assert "session_id" in body
+    assert "cumulative_returns" in body
+    assert "correlation_matrix" in body
 
 
 def test_analyze_rejects_length_mismatch(client: TestClient) -> None:
