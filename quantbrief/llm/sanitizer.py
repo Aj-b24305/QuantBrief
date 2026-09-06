@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 
-from risksentry.schemas import AgentSynthesizedMemo
+from quantbrief.schemas import AgentSynthesizedMemo
 
 #: ``<think>...</think>`` reasoning blocks, non-greedy so multiple blocks and
 #: nested angle brackets survive; ``re.DOTALL`` lets ``.*?`` cross newlines.

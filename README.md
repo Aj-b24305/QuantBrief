@@ -1,4 +1,4 @@
-# RiskSentry
+# QuantBrief
 
 A **portfolio risk analytics platform** combining a deterministic quantitative engine (NumPy/Pandas)
 with an LLM-powered risk advisor — built as a full-stack Python project for the resume.
@@ -26,7 +26,7 @@ with an LLM-powered risk advisor — built as a full-stack Python project for th
           ▼                                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  FastAPI Backend  (port 8000)                                       │
-│  risksentry/main.py                                                 │
+│  quantbrief/main.py                                                 │
 │                                                                     │
 │  POST /analyze ──────────────────────────────────────────────────▶ │
 │    market_data.py  →  calculator.py  →  state.py (session cache)   │
@@ -65,7 +65,7 @@ tryingFreebuff/
 ├── .env.example             ← template
 ├── .gitignore
 │
-├── risksentry/              ← FastAPI backend package
+├── quantbrief/              ← FastAPI backend package
 │   ├── __init__.py          # package metadata / version
 │   ├── main.py              # FastAPI app: /analyze, /memo/stream, /chat/stream, /ping
 │   ├── config.py            # pydantic-settings + LLM provider resolution
@@ -107,7 +107,7 @@ ollama pull granite4.2:3b     # IBM Granite — fast, structured JSON (~2 GB)
 ollama pull llama3.1:8b       # Meta Llama 3.1 — higher quality, slower (~5 GB)
 
 # 4a. Start the backend (stable — no --reload, keeps sessions in memory)
-uvicorn risksentry.main:app --host 0.0.0.0 --port 8000
+uvicorn quantbrief.main:app --host 0.0.0.0 --port 8000
 
 # 4b. Start the dashboard (in a second terminal)
 streamlit run frontend/app.py
@@ -143,7 +143,7 @@ All settings are in `.env` (prefix `RISKSENTRY_`):
 
 ## Quantitative Engine
 
-All math is in [`calculator.py`](risksentry/calculator.py) — deterministic, no LLM involved.
+All math is in [`calculator.py`](quantbrief/calculator.py) — deterministic, no LLM involved.
 
 | Metric | Formula |
 |--------|---------|

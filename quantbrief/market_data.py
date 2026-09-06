@@ -7,7 +7,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-from risksentry.scenarios import SCENARIOS
+from quantbrief.scenarios import SCENARIOS
 
 
 def utc_today() -> date:

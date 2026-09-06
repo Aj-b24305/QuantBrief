@@ -5,10 +5,10 @@ import math
 import numpy as np
 import pandas as pd
 
-from risksentry.config import Settings
-from risksentry.market_data import MarketData
-from risksentry.scenarios import SCENARIOS, ShockScenario
-from risksentry.schemas import AssetMetrics, PortfolioMetrics, ShockScenarioResult
+from quantbrief.config import Settings
+from quantbrief.market_data import MarketData
+from quantbrief.scenarios import SCENARIOS, ShockScenario
+from quantbrief.schemas import AssetMetrics, PortfolioMetrics, ShockScenarioResult
 
 
 class InsufficientDataError(Exception):

@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "risksentry"
+name = "quantbrief"
 version = "0.1.0"
-description = "RiskSentry - deterministic portfolio risk engine (FastAPI + NumPy/Pandas) with LLM memo synthesis"
+description = "QuantBrief - deterministic portfolio risk engine (FastAPI + NumPy/Pandas) with LLM memo synthesis and streaming chat advisor"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "RiskSentry" }]
-keywords = ["risk", "portfolio", "var", "beta", "sharpe", "fastapi", "quant", "llm"]
+authors = [{ name = "QuantBrief" }]
+keywords = ["risk", "portfolio", "var", "beta", "sharpe", "fastapi", "quant", "llm", "streamlit"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -42,18 +42,18 @@ dev = [
 ]
 
 [project.scripts]
-risksentry = "risksentry.main:main"
-risksentry-dashboard = "risksentry._dashboard_runner:main"
+quantbrief = "quantbrief.main:main"
+quantbrief-dashboard = "quantbrief._dashboard_runner:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["risksentry"]
+packages = ["quantbrief"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --disable-warnings"
 
 [tool.mypy]
-python_version = "3.12"  # 3.12+ so numpy's bundled stubs (which use `type` statements) parse
+python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
 disallow_untyped_defs = true

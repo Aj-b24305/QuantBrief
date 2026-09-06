@@ -12,8 +12,8 @@ import requests
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from risksentry.agent import SYSTEM_PROMPT, AgentSynthesizer, build_fallback_memo, parse_memo
-from risksentry.calculator import (
+from quantbrief.agent import SYSTEM_PROMPT, AgentSynthesizer, build_fallback_memo, parse_memo
+from quantbrief.calculator import (
     InsufficientDataError,
     annualized_return,
     annualized_volatility,
@@ -23,10 +23,10 @@ from risksentry.calculator import (
     sharpe_ratio,
     weighted_portfolio_returns,
 )
-from risksentry.config import Settings
-from risksentry.main import app
-from risksentry.market_data import MarketData, MarketDataError, download_window, fetch_market_data
-from risksentry.schemas import (
+from quantbrief.config import Settings
+from quantbrief.main import app
+from quantbrief.market_data import MarketData, MarketDataError, download_window, fetch_market_data
+from quantbrief.schemas import (
     AgentSynthesizedMemo,
     AnalysisRequest,
     AnalysisResponse,
@@ -368,7 +368,7 @@ class FakeTicker:
 
 @pytest.fixture
 def fake_yfinance(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("risksentry.market_data.yf.Ticker", FakeTicker)
+    monkeypatch.setattr("quantbrief.market_data.yf.Ticker", FakeTicker)
 
 
 def test_fetch_market_data_ok(fake_yfinance: None) -> None:
@@ -571,7 +571,7 @@ def test_health(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["service"] == "risksentry"
+    assert body["service"] == "quantbrief"
     assert "version" in body
 
 
@@ -580,10 +580,10 @@ def test_analyze_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "risksentry.main.fetch_market_data",
+        "quantbrief.main.fetch_market_data",
         lambda tickers, benchmark, lookback: make_market_data(tuple(tickers)),
     )
-    monkeypatch.setattr("risksentry.main.AgentSynthesizer", FakeAgentSynthesizer)
+    monkeypatch.setattr("quantbrief.main.AgentSynthesizer", FakeAgentSynthesizer)
 
     response = client.post(
         "/analyze",
@@ -630,7 +630,7 @@ def test_analyze_missing_ticker_returns_400(
     def boom(tickers: list[str], benchmark: str, lookback: int) -> MarketData:
         raise MarketDataError("no price data for BADTICK", missing=["BADTICK"])
 
-    monkeypatch.setattr("risksentry.main.fetch_market_data", boom)
+    monkeypatch.setattr("quantbrief.main.fetch_market_data", boom)
     response = client.post("/analyze", json={"tickers": ["AAPL"], "weights": [1.0]})
     assert response.status_code == 400
     assert "BADTICK" in response.json()["detail"]
@@ -643,7 +643,7 @@ def test_analyze_network_failure_returns_503(
     def boom(tickers: list[str], benchmark: str, lookback: int) -> MarketData:
         raise MarketDataError("network failure", missing=["AAPL"], network=True)
 
-    monkeypatch.setattr("risksentry.main.fetch_market_data", boom)
+    monkeypatch.setattr("quantbrief.main.fetch_market_data", boom)
     response = client.post("/analyze", json={"tickers": ["AAPL"], "weights": [1.0]})
     assert response.status_code == 503
 
@@ -652,12 +652,12 @@ def test_analyze_insufficient_data_returns_422(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from risksentry.calculator import InsufficientDataError as CalcError
+    from quantbrief.calculator import InsufficientDataError as CalcError
 
     def boom(tickers: list[str], benchmark: str, lookback: int) -> MarketData:
         raise CalcError("only 5 complete trading days available")
 
-    monkeypatch.setattr("risksentry.main.fetch_market_data", boom)
+    monkeypatch.setattr("quantbrief.main.fetch_market_data", boom)
     response = client.post("/analyze", json={"tickers": ["AAPL"], "weights": [1.0]})
     assert response.status_code == 422
     assert "5 complete trading days" in response.json()["detail"]

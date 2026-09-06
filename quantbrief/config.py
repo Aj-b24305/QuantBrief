@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     """Runtime configuration.
 
     Every field can be overridden through environment variables (a local ``.env``
-    file is also supported). The ``RISKSENTRY_`` prefix applies to all of them,
-    e.g. ``RISKSENTRY_LLM_MODEL=qwen3.5:9b``. Provider-specific credentials
+    file is also supported). The ``QUANTBRIEF_`` prefix applies to all of them,
+    e.g. ``QUANTBRIEF_LLM_MODEL=qwen3.5:9b``. Provider-specific credentials
     (``GEMINI_API_KEY``, ``OLLAMA_TIMEOUT_SECONDS``) are also accepted without
     the prefix, so standard cloud/registry tooling keeps working.
     """
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        env_prefix="RISKSENTRY_",
+        env_prefix="QUANTBRIEF_",
         extra="ignore",
     )
 
@@ -49,28 +49,28 @@ class Settings(BaseSettings):
     # Cap on local Ollama HTTP requests (OLLAMA_TIMEOUT_SECONDS=120).
     ollama_timeout_seconds: float = Field(
         default=120.0,
-        validation_alias=AliasChoices("RISKSENTRY_OLLAMA_TIMEOUT_SECONDS", "OLLAMA_TIMEOUT_SECONDS"),
+        validation_alias=AliasChoices("QUANTBRIEF_OLLAMA_TIMEOUT_SECONDS", "OLLAMA_TIMEOUT_SECONDS"),
     )
 
     # --- Gemini cloud fallback (OpenAI-compatible endpoint) ----------------
     gemini_base_url: str = Field(
         default=DEFAULT_GEMINI_BASE_URL,
-        validation_alias=AliasChoices("GEMINI_BASE_URL", "RISKSENTRY_GEMINI_BASE_URL"),
+        validation_alias=AliasChoices("GEMINI_BASE_URL", "QUANTBRIEF_GEMINI_BASE_URL"),
     )
     gemini_api_key: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("GEMINI_API_KEY", "RISKSENTRY_GEMINI_API_KEY"),
+        validation_alias=AliasChoices("GEMINI_API_KEY", "QUANTBRIEF_GEMINI_API_KEY"),
     )
     gemini_model: str = Field(
         default="gemini-3.6-flash",
-        validation_alias=AliasChoices("GEMINI_MODEL", "RISKSENTRY_GEMINI_MODEL"),
+        validation_alias=AliasChoices("GEMINI_MODEL", "QUANTBRIEF_GEMINI_MODEL"),
     )
 
     def resolve_llm_config(self) -> tuple[str, str | None, str]:
         """Resolve ``(base_url, api_key, model)`` for the configured provider.
 
         - ``ollama`` (default): http://localhost:11434/v1 + ``qwen3.5:9b``.
-          Override the model with ``RISKSENTRY_LLM_MODEL`` (e.g. the lightweight
+          Override the model with ``QUANTBRIEF_LLM_MODEL`` (e.g. the lightweight
           ``deepseek-r1:1.5b`` alternative).
         - ``gemini``: OpenAI-compatible Gemini endpoint + ``gemini-2.0-flash``.
         - ``openai``: https://api.openai.com/v1 + ``gpt-4o-mini``.

@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 import httpx
 
-logger = logging.getLogger("risksentry.llm.model_checker")
+logger = logging.getLogger("quantbrief.llm.model_checker")
 
 #: How long the availability probe itself may take (short by design — this is
 #: just a registry listing, not a generation call).

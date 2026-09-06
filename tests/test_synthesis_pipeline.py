@@ -12,12 +12,12 @@ import pytest
 # Reuse the hermetic synthetic market-data builders from the core test suite.
 from test_risk_engine import make_market_data, valid_memo_payload
 
-from risksentry.agent import CORRECTION_PROMPT_TEMPLATE, AgentSynthesizer
-from risksentry.calculator import compute_metrics
-from risksentry.config import Settings
-from risksentry.llm.model_checker import is_model_available, ollama_native_tags_url
-from risksentry.llm.sanitizer import MalformedJSONError, extract_json_from_thinking
-from risksentry.schemas import AgentSynthesizedMemo, MemoContext
+from quantbrief.agent import CORRECTION_PROMPT_TEMPLATE, AgentSynthesizer
+from quantbrief.calculator import compute_metrics
+from quantbrief.config import Settings
+from quantbrief.llm.model_checker import is_model_available, ollama_native_tags_url
+from quantbrief.llm.sanitizer import MalformedJSONError, extract_json_from_thinking
+from quantbrief.schemas import AgentSynthesizedMemo, MemoContext
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -131,7 +131,7 @@ def _registry_payload(*names: str) -> dict[str, object]:
 
 @pytest.fixture
 def fake_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
-    import risksentry.llm.model_checker as checker
+    import quantbrief.llm.model_checker as checker
 
     fake_module = SimpleNamespace(AsyncClient=FakeAsyncClient, ConnectError=httpx.ConnectError)
     monkeypatch.setattr(checker, "httpx", fake_module)

@@ -1,7 +1,7 @@
 """RiskSentry · Streamlit Portfolio Dashboard
 ==============================================
 Run: streamlit run frontend/app.py
-Requires backend: uvicorn risksentry.main:app --reload
+Requires backend: uvicorn quantbrief.main:app --reload
 """
 from __future__ import annotations
 

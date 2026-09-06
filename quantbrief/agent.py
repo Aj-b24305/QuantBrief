@@ -9,16 +9,16 @@ from typing import Literal
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from risksentry.config import Settings, get_settings
-from risksentry.llm.model_checker import is_model_available as _async_is_model_available
-from risksentry.llm.sanitizer import MalformedJSONError, extract_json_from_thinking
-from risksentry.schemas import AgentSynthesizedMemo, MemoContext, MemoMeta
+from quantbrief.config import Settings, get_settings
+from quantbrief.llm.model_checker import is_model_available as _async_is_model_available
+from quantbrief.llm.sanitizer import MalformedJSONError, extract_json_from_thinking
+from quantbrief.schemas import AgentSynthesizedMemo, MemoContext, MemoMeta
 
 # Semantic alias used by the orchestration pipeline: the pre-computed,
 # authoritative quantitative report the LLM is allowed to read.
 QuantRiskReport = MemoContext
 
-logger = logging.getLogger("risksentry.agent")
+logger = logging.getLogger("quantbrief.agent")
 
 #: JSON shape the model must reproduce. Used both in the system prompt and in
 #: the self-correction prompt so the repair pass knows the target contract.
@@ -29,7 +29,7 @@ SCHEMA_SHAPE = (
 )
 
 SYSTEM_PROMPT = (
-    "You are RiskSentry's risk-memo synthesizer. You translate pre-computed quantitative risk "
+    "You are QuantBrief's risk-memo synthesizer. You translate pre-computed quantitative risk "
     "metrics into a concise, professional risk memo for portfolio managers.\n\n"
     "HARD RULES:\n"
     "1. You NEVER calculate or recalculate any number. No return, volatility, Sharpe, beta, VaR, "
@@ -59,7 +59,7 @@ def _build_user_prompt(context: MemoContext) -> str:
     """Serialize the pre-computed metrics for the LLM (never raw price series)."""
     payload = json.dumps(context.model_dump(mode="json"), indent=2)
     return (
-        "Below is the pre-computed, authoritative risk analysis produced by the RiskSentry "
+        "Below is the pre-computed, authoritative risk analysis produced by the QuantBrief "
         "quantitative engine. Do NOT recompute anything — use these numbers verbatim in your memo.\n\n"
         f"{payload}\n\n"
         "Synthesize the risk memo now. Reply with a single JSON object only."
@@ -69,7 +69,7 @@ def _build_user_prompt(context: MemoContext) -> str:
 def parse_memo(content: str) -> AgentSynthesizedMemo:
     """Parse and strictly validate the LLM's JSON into ``AgentSynthesizedMemo``.
 
-    Thin wrapper over :func:`risksentry.llm.sanitizer.extract_json_from_thinking`
+    Thin wrapper over :func:`quantbrief.llm.sanitizer.extract_json_from_thinking`
     (which already strips ``<think>`` blocks, code fences and trailing noise).
     Raises :class:`MalformedJSONError` when the output does not conform.
     """
@@ -137,7 +137,7 @@ def build_fallback_memo(context: MemoContext) -> AgentSynthesizedMemo:
         confidence=confidence,
         caveats=[
             (
-                "This memo was generated deterministically by the RiskSentry engine because the "
+                "This memo was generated deterministically by the QuantBrief engine because the "
                 "LLM synthesizer was unavailable or returned invalid output. All figures remain "
                 "authoritative."
             ),
@@ -253,7 +253,7 @@ class AgentSynthesizer:
                 f"local model {self.model} unavailable (pre-flight check against "
                 f"{self.base_url}/api/tags failed)"
             )
-            logger.warning("RiskSentry LLM: %s — jumping to Gemini fallback.", local_error)
+            logger.warning("QuantBrief LLM: %s — jumping to Gemini fallback.", local_error)
         else:
             try:
                 # Step 2 — local generation with the enforced 30s timeout.
@@ -268,7 +268,7 @@ class AgentSynthesizer:
                 )
             except Exception as exc:  # noqa: BLE001 - timeout/connection/refusal
                 local_error = f"local generation failed ({type(exc).__name__}: {exc})"
-                logger.warning("RiskSentry LLM: %s — jumping to Gemini fallback.", local_error)
+                logger.warning("QuantBrief LLM: %s — jumping to Gemini fallback.", local_error)
             else:
                 # Step 3 — deterministic extraction + strict schema validation.
                 try:
@@ -301,10 +301,10 @@ class AgentSynthesizer:
                         )
                     except MalformedJSONError as exc:
                         local_error = f"self-correction failed ({type(exc).__name__}: {str(exc)[:200]})"
-                        logger.warning("RiskSentry LLM: %s — jumping to Gemini fallback.", local_error)
+                        logger.warning("QuantBrief LLM: %s — jumping to Gemini fallback.", local_error)
                     except Exception as exc:  # noqa: BLE001 - repair request itself failed
                         local_error = f"self-correction request failed ({type(exc).__name__}: {exc})"
-                        logger.warning("RiskSentry LLM: %s — jumping to Gemini fallback.", local_error)
+                        logger.warning("QuantBrief LLM: %s — jumping to Gemini fallback.", local_error)
 
         # Step 5 — Gemini cloud fallback (OpenAI-compatible endpoint).
         gemini_error: str | None = None
@@ -336,7 +336,7 @@ class AgentSynthesizer:
 
         # Step 6 — deterministic fallback memo. LLM failures must never 500.
         logger.warning(
-            "RiskSentry LLM: local error [%s]; Gemini error [%s]; returning deterministic fallback memo.",
+            "QuantBrief LLM: local error [%s]; Gemini error [%s]; returning deterministic fallback memo.",
             local_error,
             gemini_error,
         )

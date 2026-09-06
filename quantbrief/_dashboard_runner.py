@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Convenience entry-point: ``risksentry-dashboard``."""
+"""Convenience entry-point: ``quantbrief-dashboard``."""
 
 import subprocess
 import sys

@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from risksentry.schemas import AnalysisRequest, AnalysisResponse
+from quantbrief.schemas import AnalysisRequest, AnalysisResponse
 
 
 @dataclass

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Chat engine for RiskSentry's conversational follow-up feature."""
+"""Chat engine for QuantBrief's conversational follow-up feature."""
 
 import json
 import logging
@@ -9,16 +9,16 @@ from typing import Any
 
 from openai import OpenAI
 
-from risksentry.state import ChatMessage
+from quantbrief.state import ChatMessage
 
-logger = logging.getLogger("risksentry.chat")
+logger = logging.getLogger("quantbrief.chat")
 
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
 
 CHAT_SYSTEM_PROMPT = """\
-You are RiskSentry's portfolio risk advisor. A quantitative risk engine has
+You are QuantBrief's portfolio risk advisor. A quantitative risk engine has
 already computed all the hard numbers for this portfolio — your job is to
 help the portfolio manager understand and act on them through natural
 conversation.

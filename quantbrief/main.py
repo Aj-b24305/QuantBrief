@@ -8,13 +8,13 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from risksentry import __version__
-from risksentry.agent import AgentSynthesizer, _default_preflight
-from risksentry.calculator import InsufficientDataError, compute_metrics, weighted_portfolio_returns
-from risksentry.chat import build_chat_messages, stream_chat
-from risksentry.config import Settings, get_settings
-from risksentry.market_data import MarketDataError, fetch_market_data
-from risksentry.schemas import (
+from quantbrief import __version__
+from quantbrief.agent import AgentSynthesizer, _default_preflight
+from quantbrief.calculator import InsufficientDataError, compute_metrics, weighted_portfolio_returns
+from quantbrief.chat import build_chat_messages, stream_chat
+from quantbrief.config import Settings, get_settings
+from quantbrief.market_data import MarketDataError, fetch_market_data
+from quantbrief.schemas import (
     AgentSynthesizedMemo,
     AnalysisRequest,
     AnalysisResponse,
@@ -23,7 +23,7 @@ from risksentry.schemas import (
     MetricsOnlyResponse,
     SessionAnalysisResponse,
 )
-from risksentry.state import (
+from quantbrief.state import (
     ChatMessage,
     InMemorySessionRepository,
     PortfolioSession,
@@ -33,12 +33,12 @@ from risksentry.state import (
     new_session_id,
 )
 
-logger = logging.getLogger("risksentry")
+logger = logging.getLogger("quantbrief")
 
 settings = get_settings()
 
 app = FastAPI(
-    title="RiskSentry",
+    title="QuantBrief",
     version=__version__,
     description=(
         "Deterministic portfolio risk engine (NumPy/Pandas) with LLM memo synthesis and "
@@ -80,7 +80,7 @@ def _resolve_llm_client(s: Settings) -> tuple[object, str]:
 @app.get("/", tags=["system"])
 def root() -> dict[str, str]:
     return {
-        "service": "RiskSentry",
+        "service": "QuantBrief",
         "docs": "/docs",
         "health": "/health",
         "analyze": "POST /analyze  (fast — metrics + charts, no LLM)",
@@ -93,7 +93,7 @@ def root() -> dict[str, str]:
 def health() -> dict[str, str]:
     return {
         "status": "ok",
-        "service": "risksentry",
+        "service": "quantbrief",
         "version": __version__,
         "timestamp": datetime.now(UTC).isoformat(),
     }
@@ -150,8 +150,8 @@ def analyze(
         session_id = new_session_id()
         # Use a temporary AnalysisResponse with a placeholder memo so the
         # session is cache-able immediately; /memo/stream overwrites this.
-        from risksentry.agent import build_fallback_memo
-        from risksentry.schemas import MemoMeta
+        from quantbrief.agent import build_fallback_memo
+        from quantbrief.schemas import MemoMeta
 
         placeholder_memo = build_fallback_memo(context)
         placeholder_meta = MemoMeta(synthesized_by_llm=False, note="pending — call /memo/stream")
@@ -246,7 +246,7 @@ def memo_stream(
                 yield json.dumps({"type": "token", "text": word + " "}) + "\n"
 
             # Update session with real memo
-            from risksentry.schemas import MemoMeta as _MemoMeta
+            from quantbrief.schemas import MemoMeta as _MemoMeta
 
             session.response = AnalysisResponse(
                 request=session.request,
@@ -361,7 +361,7 @@ def main() -> None:
     """Run the development server."""
     import uvicorn
 
-    uvicorn.run("risksentry.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("quantbrief.main:app", host="0.0.0.0", port=8000, reload=False)
 
 
 if __name__ == "__main__":
