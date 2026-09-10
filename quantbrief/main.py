@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from quantbrief import __version__
-from quantbrief.agent import AgentSynthesizer, _default_preflight
+from quantbrief.agent import AgentSynthesizer
 from quantbrief.calculator import InsufficientDataError, compute_metrics, weighted_portfolio_returns
 from quantbrief.chat import build_chat_messages, stream_chat
 from quantbrief.config import Settings, get_settings
@@ -54,22 +54,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _resolve_llm_client(s: Settings) -> tuple[object, str]:
-    """Return (OpenAI client, model_name) selecting local→Gemini fallback."""
-    from openai import OpenAI
-
-    base_url, api_key, model = s.resolve_llm_config()
-    use_local = _default_preflight(model, base_url)
-    if not use_local and s.gemini_api_key:
-        g_url, g_key, g_model = s.resolve_gemini_config()
-        return OpenAI(base_url=g_url, api_key=g_key, timeout=s.llm_timeout_seconds), g_model
-    return OpenAI(base_url=base_url, api_key=api_key or "not-set", timeout=s.ollama_timeout_seconds), model
 
 
 # ---------------------------------------------------------------------------
@@ -208,13 +192,14 @@ def memo_stream(
 ) -> StreamingResponse:
     """Stream the LLM risk memo for an existing session.
 
-    Yields newline-delimited JSON tokens so the frontend can display the memo
-    incrementally. On completion the session's cached memo is updated.
+    Delegates to :meth:`AgentSynthesizer.stream_synthesis` which calls
+    ``create(stream=True)`` — tokens are forwarded to the client *as the model
+    generates them*, not word-split from an already-complete response.
 
-    The stream emits three event types (one JSON object per line):
-    - ``{"type": "token", "text": "..."}``  — a text chunk from the LLM
-    - ``{"type": "done", "memo": {...}, "memo_meta": {...}}``  — final validated memo
-    - ``{"type": "error", "detail": "..."}``  — something went wrong
+    Event types (NDJSON, one JSON object per line):
+    - ``{"type": "token", "text": "..."}``   — raw LLM token
+    - ``{"type": "done",  "memo": {...}, "memo_meta": {...}}``  — final validated object
+    - ``{"type": "error", "detail": "..."}`` — unrecoverable error
     """
     import json
 
@@ -226,44 +211,26 @@ def memo_stream(
     if context is None:
         raise HTTPException(status_code=500, detail="Session context missing — re-run /analyze.")
 
-    s: Settings = settings
-    client, model = _resolve_llm_client(s)
+    synthesizer = AgentSynthesizer(settings)
 
     def _generate() -> object:
         try:
-            memo, memo_meta = AgentSynthesizer(s).synthesize(context)
-
-            # Emit tokens word-by-word from summary + key_risks so the UI
-            # feels live (full synthesis already happened, we chunk the output)
-            full_text = (
-                f"**{memo.title}**\n\n"
-                f"{memo.summary}\n\n"
-                f"**Key Risks**\n" + "\n".join(f"- {r}" for r in memo.key_risks) + "\n\n"
-                f"**Recommendations**\n" + "\n".join(f"- {r}" for r in memo.recommendations) + "\n\n"
-                f"**Stress Test Outlook**\n{memo.stress_test_outlook}"
-            )
-            for word in full_text.split(" "):
-                yield json.dumps({"type": "token", "text": word + " "}) + "\n"
-
-            # Update session with real memo
-            from quantbrief.schemas import MemoMeta as _MemoMeta
-
-            session.response = AnalysisResponse(
-                request=session.request,
-                portfolio=session.response.portfolio,
-                assets=session.response.assets,
-                shock_scenarios=session.response.shock_scenarios,
-                memo=memo,
-                memo_meta=memo_meta,
-            )
-            repo.save(session)
-
-            yield json.dumps({
-                "type": "done",
-                "memo": memo.model_dump(mode="json"),
-                "memo_meta": memo_meta.model_dump(mode="json"),
-            }) + "\n"
-
+            for event in synthesizer.stream_synthesis(context):
+                if event["type"] == "done":
+                    # Update cached session with the validated memo
+                    from quantbrief.schemas import AgentSynthesizedMemo as _Memo, MemoMeta as _Meta
+                    memo = _Memo.model_validate(event["memo"])
+                    memo_meta = _Meta.model_validate(event["memo_meta"])
+                    session.response = AnalysisResponse(
+                        request=session.request,
+                        portfolio=session.response.portfolio,
+                        assets=session.response.assets,
+                        shock_scenarios=session.response.shock_scenarios,
+                        memo=memo,
+                        memo_meta=memo_meta,
+                    )
+                    repo.save(session)
+                yield json.dumps(event) + "\n"
         except Exception as exc:  # noqa: BLE001
             logger.warning("memo_stream error: %s", exc)
             yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
@@ -281,7 +248,11 @@ def chat_stream(
     payload: ChatRequest,
     repo: InMemorySessionRepository = Depends(get_session_repo),
 ) -> StreamingResponse:
-    """Stream a conversational response grounded in the cached quantitative report."""
+    """Stream a conversational response grounded in the cached quantitative report.
+
+    Re-uses ``AgentSynthesizer``'s pre-built OpenAI clients (local + Gemini) via
+    the module-level ``stream_chat`` helper — no duplicate client construction.
+    """
     session = repo.get(payload.session_id)
     if session is None:
         raise HTTPException(
@@ -304,12 +275,15 @@ def chat_stream(
     session.chat_history.append(ChatMessage(role="user", content=payload.message))
     messages = build_chat_messages(context_payload, session.chat_history[:-1], payload.message)
 
-    s: Settings = settings
-    client, model = _resolve_llm_client(s)
+    # Re-use AgentSynthesizer's client — it already selected local vs Gemini.
+    synth = AgentSynthesizer(settings)
+    client = synth._client  # noqa: SLF001 — deliberate internal access to avoid duplicate construction
+    model = synth.model
+    timeout = settings.ollama_timeout_seconds
 
     def _token_generator() -> object:
         collected: list[str] = []
-        for chunk in stream_chat(client, model, messages, timeout=s.ollama_timeout_seconds):
+        for chunk in stream_chat(client, model, messages, timeout=timeout):
             collected.append(chunk)
             yield chunk
         full_reply = "".join(collected)

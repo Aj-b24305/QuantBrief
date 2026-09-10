@@ -40,13 +40,23 @@ SYSTEM_PROMPT = (
     "3. When comparing returns, sign and magnitude matter: a more negative return represents a "
     "larger loss. For example, -38% is worse (more loss, underperformance) than -24% — never "
     "describe -38% as outperforming -24%.\n"
-    "4. If a metric is null, do not invent a value; describe the gap qualitatively.\n"
-    "5. Only discuss shock scenarios that appear in the provided data.\n"
-    "6. Your entire reply must be a single JSON object matching this exact schema:\n"
+    "4. Return Verification: Compare Portfolio Return to Benchmark Return before generating text. "
+    "If Portfolio Return > Benchmark Return, strictly PROHIBIT phrases like 'limited upside', 'lagged return', or 'underperformed'.\n"
+    "5. Anomaly Guardrails: If Sharpe Ratio > 2.0 OR (Portfolio Return > Benchmark Return + 10% AND Beta < 0.5), "
+    "do NOT describe this as a normal 'defensive strategy' success. State clearly: 'Warning: Metrics suggest statistical anomaly or data error.'\n"
+    "6. Caveat Dependency: If critical data parameters or historical window gaps are listed in the 'caveats' section, "
+    "lock the 'recommendations' output to include 'Further Analysis Required'. Do not recommend holding or adjusting allocations based on incomplete data.\n"
+    "7. If a metric is null, do not invent a value; describe the gap qualitatively.\n"
+    "8. Only discuss shock scenarios that appear in the provided data.\n"
+    "9. Your entire reply must be a single JSON object matching this exact schema:\n"
     f"{SCHEMA_SHAPE}\n"
-    "7. No markdown, no prose, no commentary outside the JSON object. If you perform any internal "
-    "reasoning, emit it only inside a single <think>...</think> block immediately before the JSON; "
-    "the JSON object itself must still be complete and valid."
+    "10. MANDATORY PRE-CHECK: You MUST begin your response with a <think>...</think> block. "
+    "Inside this block, you must explicitly write out the answers to these three questions:\n"
+    "    A. Is the Sharpe Ratio > 2.0? (If yes, trigger Rule 5 anomaly warning).\n"
+    "    B. Did the Portfolio Return beat the Benchmark? (If yes, trigger Rule 4 upside prohibition).\n"
+    "    C. Are there missing data caveats? (If yes, trigger Rule 6 'Further Analysis Required').\n"
+    "Only after completing this checklist, output the strictly valid JSON object. No markdown or text "
+    "outside the JSON object and the think block."
 )
 
 CORRECTION_PROMPT_TEMPLATE = (
@@ -165,7 +175,8 @@ class AgentSynthesizer:
     Pipeline (see :meth:`synthesize_risk_memo`):
 
     1. Pre-flight: :func:`is_model_available` against Ollama's ``/api/tags``.
-    2. Local generation on Ollama with a 30s request timeout.
+    2. Local generation on Ollama with a streaming request — tokens are yielded
+       as they arrive; the full accumulated text is validated at the end.
     3. Deterministic regex extraction + Pydantic validation of the memo JSON.
     4. Zero-temperature self-correction on the *same* local model when the
        first output is malformed.
@@ -226,6 +237,151 @@ class AgentSynthesizer:
             elapsed_ms=elapsed_ms,
             note=outcome.get("note"),
         )
+
+    def stream_synthesis(
+        self,
+        context: MemoContext,
+    ) -> "collections.abc.Generator[dict, None, None]":
+        """True streaming memo pipeline — yields token dicts as the LLM generates.
+
+        Emits three event shapes (same as ``/memo/stream`` NDJSON protocol):
+
+        * ``{"type": "token", "text": str}``  — raw LLM token, streamed immediately
+        * ``{"type": "done", "memo": dict, "memo_meta": dict}``  — after full validation
+        * ``{"type": "error", "detail": str}``  — unrecoverable failure (very unlikely;
+          the deterministic fallback is used before this fires)
+
+        LLM generation is real-time: tokens arrive from ``create(stream=True)``
+        and are forwarded immediately — the user sees text appearing as the model
+        writes it, not after a post-hoc word-split of an already-complete response.
+        Pydantic validation happens once, on the fully-accumulated text.
+        """
+        import collections.abc  # local to avoid circular at module level
+
+        started = perf_counter()
+        user_prompt = _build_user_prompt(context)
+        available = False
+        local_error: str | None = None
+
+        # Step 1: pre-flight
+        try:
+            available = self._preflight(self.model, self.base_url)
+        except Exception as exc:  # noqa: BLE001
+            local_error = f"pre-flight raised ({type(exc).__name__}: {exc})"
+
+        if available:
+            # Step 2: stream from local Ollama — yield tokens as they arrive
+            try:
+                accumulated = ""
+                for token in self._stream_tokens(
+                    self._client, self.model, user_prompt,
+                    temperature=self.settings.llm_temperature,
+                    json_object=True,
+                    timeout=self.local_timeout,
+                ):
+                    accumulated += token
+                    yield {"type": "token", "text": token}
+
+                # Step 3: validate accumulated text
+                try:
+                    memo, outcome = self._validated_memo(
+                        extract_json_from_thinking(accumulated),
+                        source="local", model=self.model, note=None,
+                    )
+                    self._last_outcome = outcome
+                    elapsed_ms = int((perf_counter() - started) * 1000)
+                    source = outcome.get("source") or "local"
+                    yield {"type": "done", "memo": memo.model_dump(mode="json"), "memo_meta": MemoMeta(
+                        synthesized_by_llm=True,
+                        model=outcome.get("model"),
+                        elapsed_ms=elapsed_ms,
+                        note=outcome.get("note"),
+                    ).model_dump(mode="json")}
+                    return
+                except MalformedJSONError:
+                    # Step 4: self-correction — non-streaming (repair pass is short)
+                    try:
+                        correction_prompt = CORRECTION_PROMPT_TEMPLATE.format(
+                            schema=SCHEMA_SHAPE, raw_text=accumulated[:4000]
+                        )
+                        repaired = self._complete(
+                            self._client, self.model, correction_prompt,
+                            temperature=0.0, json_object=True, timeout=self.local_timeout,
+                        )
+                        memo, outcome = self._validated_memo(
+                            extract_json_from_thinking(repaired),
+                            source="local", model=self.model,
+                            note="local output malformed; repaired via zero-temperature self-correction",
+                        )
+                        self._last_outcome = outcome
+                        elapsed_ms = int((perf_counter() - started) * 1000)
+                        yield {"type": "done", "memo": memo.model_dump(mode="json"), "memo_meta": MemoMeta(
+                            synthesized_by_llm=True,
+                            model=outcome.get("model"),
+                            elapsed_ms=elapsed_ms,
+                            note=outcome.get("note"),
+                        ).model_dump(mode="json")}
+                        return
+                    except Exception as exc:  # noqa: BLE001
+                        local_error = f"self-correction failed ({type(exc).__name__}: {exc})"
+                        logger.warning("QuantBrief LLM: %s — jumping to Gemini fallback.", local_error)
+
+            except Exception as exc:  # noqa: BLE001
+                local_error = f"local streaming failed ({type(exc).__name__}: {exc})"
+                logger.warning("QuantBrief LLM: %s — jumping to Gemini fallback.", local_error)
+        else:
+            local_error = local_error or f"local model {self.model} unavailable (pre-flight failed)"
+            logger.warning("QuantBrief LLM: %s — jumping to Gemini fallback.", local_error)
+
+        # Step 5: Gemini fallback — stream tokens from cloud
+        gemini_error: str | None = None
+        if self._gemini_client is not None:
+            try:
+                accumulated = ""
+                for token in self._stream_tokens(
+                    self._gemini_client, self.gemini_model, user_prompt,
+                    temperature=0.0, json_object=False,
+                    timeout=self.settings.llm_timeout_seconds,
+                ):
+                    accumulated += token
+                    yield {"type": "token", "text": token}
+
+                note = (
+                    f"Local Ollama unavailable ({local_error}); "
+                    f"memo produced by Gemini fallback ({self.gemini_model})."
+                )
+                memo, outcome = self._validated_memo(
+                    extract_json_from_thinking(accumulated),
+                    source="gemini", model=self.gemini_model, note=note,
+                )
+                self._last_outcome = outcome
+                elapsed_ms = int((perf_counter() - started) * 1000)
+                yield {"type": "done", "memo": memo.model_dump(mode="json"), "memo_meta": MemoMeta(
+                    synthesized_by_llm=True,
+                    model=outcome.get("model"),
+                    elapsed_ms=elapsed_ms,
+                    note=outcome.get("note"),
+                ).model_dump(mode="json")}
+                return
+            except Exception as exc:  # noqa: BLE001
+                gemini_error = f"{type(exc).__name__}: {exc}"
+        else:
+            gemini_error = "Gemini fallback not configured (no GEMINI_API_KEY)"
+
+        # Step 6: deterministic fallback
+        logger.warning(
+            "QuantBrief LLM: local [%s]; Gemini [%s]; returning deterministic fallback.",
+            local_error, gemini_error,
+        )
+        fallback = build_fallback_memo(context)
+        note = f"LLM unavailable (local: {local_error}; gemini: {gemini_error}); deterministic fallback used."
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        yield {"type": "done", "memo": fallback.model_dump(mode="json"), "memo_meta": MemoMeta(
+            synthesized_by_llm=False,
+            model=self.model,
+            elapsed_ms=elapsed_ms,
+            note=note,
+        ).model_dump(mode="json")}
 
     # --- Orchestration (spec steps 1-6) -------------------------------------
 
@@ -368,27 +524,53 @@ class AgentSynthesizer:
         json_object: bool,
         timeout: float,
     ) -> str:
-        """Single chat completion; returns the raw text content."""
+        """Single non-streaming chat completion; returns the raw text content.
+
+        Used for self-correction passes (short prompts where streaming adds no UX benefit).
+        """
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
+        kwargs: dict = {"model": model, "messages": messages, "temperature": temperature, "timeout": timeout}
         if json_object:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                response_format={"type": "json_object"},
-                timeout=timeout,
-            )
-        else:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                timeout=timeout,
-            )
+            kwargs["response_format"] = {"type": "json_object"}
+        response = client.chat.completions.create(**kwargs)
         return response.choices[0].message.content or ""
+
+    def _stream_tokens(
+        self,
+        client: OpenAI,
+        model: str,
+        prompt: str,
+        *,
+        temperature: float,
+        json_object: bool,
+        timeout: float,
+    ) -> "collections.abc.Generator[str, None, None]":
+        """True streaming helper — yields raw token strings as the model generates them.
+
+        Uses ``create(stream=True)`` which is compatible with Ollama, Gemini, and OpenAI.
+        """
+        import collections.abc
+
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        kwargs: dict = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+            "timeout": timeout,
+        }
+        if json_object:
+            kwargs["response_format"] = {"type": "json_object"}
+        stream = client.chat.completions.create(**kwargs)
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
 
 def synthesize_risk_memo(quant_report: QuantRiskReport) -> AgentSynthesizedMemo:

@@ -1,4 +1,4 @@
-"""RiskSentry · Streamlit Portfolio Dashboard
+"""QuantBrief · Streamlit Portfolio Dashboard
 ==============================================
 Run: streamlit run frontend/app.py
 Requires backend: uvicorn quantbrief.main:app --reload
@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
@@ -20,7 +22,7 @@ BACKEND = "http://localhost:8000"
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="RiskSentry · Portfolio Risk Dashboard",
+    page_title="QuantBrief · Portfolio Risk Dashboard",
     page_icon="📊",
     layout="wide",
 )
@@ -47,13 +49,15 @@ for key, default in [
 
 
 def _pct(v: float | None, decimals: int = 2) -> str:
-    if v is None:
+    if v is None or (isinstance(v, float) and math.isnan(v)):
         return "n/a"
     return f"{v * 100:.{decimals}f}%"
 
 
 def _f2(v: float | None) -> str:
-    return "n/a" if v is None else f"{v:.2f}"
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "n/a"
+    return f"{v:.2f}"
 
 
 def _parse_weights(raw: str) -> list[float] | None:
@@ -64,21 +68,116 @@ def _parse_weights(raw: str) -> list[float] | None:
         return None
 
 
+def _format_partial_memo_json(text: str) -> str:
+    """Format raw streaming memo text (JSON / think blocks) into clean Markdown."""
+    if "<think>" in text:
+        if "</think>" in text:
+            text = text.split("</think>", 1)[1].strip()
+        else:
+            think_content = text.split("<think>", 1)[1].strip()
+            return f"🧠 *Analyzing rules & metrics...*\n\n_{think_content}_"
+
+    text = text.strip()
+    if not text.startswith("{"):
+        return text
+
+    # Try full JSON parse first
+    try:
+        data = json.loads(text)
+        md = f"### {data.get('title', 'Portfolio Risk Memo')}\n\n"
+        if summary := data.get("summary"):
+            md += f"> {summary}\n\n"
+        if key_risks := data.get("key_risks"):
+            md += "**Key Risks:**\n" + "\n".join(f"- {r}" for r in key_risks) + "\n\n"
+        if recs := data.get("recommendations"):
+            md += "**Recommendations:**\n" + "\n".join(f"- {r}" for r in recs) + "\n\n"
+        if outlook := data.get("stress_test_outlook"):
+            md += f"**Stress Test Outlook:**\n{outlook}\n\n"
+        if caveats := data.get("caveats"):
+            md += "**Caveats:**\n" + "\n".join(f"- ⚠️ {c}" for c in caveats) + "\n\n"
+        return md
+    except json.JSONDecodeError:
+        pass
+
+    # Partial JSON extraction via regex
+    md_parts = []
+    m_title = re.search(r'"title"\s*:\s*"([^"]*)', text)
+    if m_title and m_title.group(1):
+        md_parts.append(f"### {m_title.group(1)}")
+
+    m_sum = re.search(r'"summary"\s*:\s*"([^"]*)', text)
+    if m_sum and m_sum.group(1):
+        md_parts.append(f"> {m_sum.group(1)}")
+
+    m_r_partial = re.search(r'"key_risks"\s*:\s*\[([^\]]*)', text, re.DOTALL)
+    if m_r_partial:
+        items = re.findall(r'"([^"]+)"', m_r_partial.group(1))
+        if items:
+            md_parts.append("**Key Risks:**\n" + "\n".join(f"- {item}" for item in items))
+
+    m_rec_partial = re.search(r'"recommendations"\s*:\s*\[([^\]]*)', text, re.DOTALL)
+    if m_rec_partial:
+        items = re.findall(r'"([^"]+)"', m_rec_partial.group(1))
+        if items:
+            md_parts.append("**Recommendations:**\n" + "\n".join(f"- {item}" for item in items))
+
+    m_out = re.search(r'"stress_test_outlook"\s*:\s*"([^"]*)', text)
+    if m_out and m_out.group(1):
+        md_parts.append(f"**Stress Test Outlook:**\n{m_out.group(1)}")
+
+    if md_parts:
+        return "\n\n".join(md_parts)
+
+    return "⏳ *Formatting risk memo...*"
+
+
 # ---------------------------------------------------------------------------
 # Sidebar — inputs
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("## ⚙️ Portfolio Setup")
-    st.caption("Enter tickers and weights, then click **Run Audit**.")
+
+    # CSV File Upload Option in Popover Box
+    with st.popover("📂 Import Portfolio CSV", width="stretch"):
+        st.markdown("### Upload CSV File")
+        st.caption("Upload a CSV containing `ticker` (or `symbol`) and `weight` columns.")
+        uploaded_csv = st.file_uploader(
+            "Select CSV file",
+            type=["csv"],
+            help="CSV with columns: ticker and weight",
+        )
+        if uploaded_csv is not None:
+            try:
+                df = pd.read_csv(uploaded_csv)
+                cols = {str(c).lower().strip(): c for c in df.columns}
+                t_col = cols.get("ticker") or cols.get("symbol") or cols.get("asset")
+                w_col = cols.get("weight") or cols.get("weights") or cols.get("allocation")
+
+                if t_col and w_col:
+                    csv_t = [str(x).strip().upper() for x in df[t_col] if str(x).strip()]
+                    csv_w = [float(x) for x in df[w_col] if pd.notnull(x)]
+                    if len(csv_t) == len(csv_w) and len(csv_t) > 0:
+                        st.session_state["csv_tickers"] = ", ".join(csv_t)
+                        st.session_state["csv_weights"] = ", ".join(str(w) for w in csv_w)
+                        st.success(f"✅ Loaded {len(csv_t)} assets from CSV!")
+                    else:
+                        st.error("Row count mismatch between tickers and weights.")
+                else:
+                    st.error("CSV requires 'ticker' and 'weight' header columns.")
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
+
+    default_tickers = st.session_state.get("csv_tickers", "RELIANCE.NS, TCS.NS, INFY.NS")
+    default_weights = st.session_state.get("csv_weights", "0.4, 0.35, 0.25")
 
     raw_tickers = st.text_input(
         "Tickers (comma-separated)",
-        value="RELIANCE.NS, TCS.NS, INFY.NS",
+        value=default_tickers,
         help="Yahoo Finance symbols, e.g. RELIANCE.NS, TCS.NS",
     )
     raw_weights = st.text_input(
         "Weights (comma-separated, must sum to 1.0)",
-        value="0.4, 0.35, 0.25",
+        value=default_weights,
     )
     benchmark = st.text_input("Benchmark ticker", value="^NSEI")
     lookback = st.slider("Lookback (days)", 90, 1825, 365, step=30)
@@ -200,7 +299,7 @@ if metrics is None:
     st.markdown(
         """
         <div style='text-align:center; margin-top:80px; opacity:0.55;'>
-            <h1>📊 RiskSentry</h1>
+            <h1>📊 QuantBrief</h1>
             <p style='font-size:1.1rem'>
                 Enter your portfolio in the sidebar and click <b>Run Audit</b> to begin.
             </p>
@@ -300,7 +399,7 @@ with chart_right:
     fig_heat = go.Figure(go.Heatmap(
         z=corr_vals, x=corr_tickers, y=corr_tickers,
         colorscale="RdBu", zmin=-1, zmax=1,
-        text=[[f"{v:.2f}" for v in row] for row in corr_vals],
+        text=[[_f2(v) for v in row] for row in corr_vals],
         texttemplate="%{text}", showscale=True,
     ))
     fig_heat.update_layout(margin=dict(t=10, b=0), height=300)
@@ -363,7 +462,7 @@ if st.session_state["memo_streaming"] and memo is None:
                     if evt.get("type") == "token":
                         token = evt.get("text", "")
                         partial_text += token
-                        memo_placeholder.markdown(partial_text + "▌")
+                        memo_placeholder.markdown(_format_partial_memo_json(partial_text) + " ▌")
                     elif evt.get("type") == "done":
                         final_memo = evt.get("memo")
                         final_meta = evt.get("memo_meta")
@@ -425,6 +524,7 @@ if user_input := st.chat_input("e.g. What's driving the high VaR? Which stock is
 
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
+        response_placeholder.markdown("⏳ *Thinking and analyzing portfolio...*")
         collected_chunks: list[str] = []
 
         try:
